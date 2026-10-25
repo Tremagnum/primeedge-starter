@@ -30,9 +30,18 @@ The app includes `/auth/set-password` for invitation and recovery sessions and `
 
 Set `ODDS_API_KEY`, `NEXT_PUBLIC_SUPABASE_URL`, and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` in the Vercel project environment settings, then redeploy. Use the Supabase publishable key, never a secret/service-role key or database password in a `NEXT_PUBLIC_` variable.
 
+## Research and analytics upgrade
+
+The app also includes `/research` for bookmaker moneyline comparisons and a Supabase-backed matchup watchlist, `/intelligence` for an educational odds and expected-value calculator, and `/dashboard` for a user's saved picks and watchlist. The original homepage, odds API, and authentication screens remain in place.
+
+The Supabase JavaScript client is already included. To enable matchup watchlists, review and run [`supabase-migration.sql`](./supabase-migration.sql) in the SQL Editor for the same Supabase project used by the app. It adds only `public.pe_watchlist`, with row-level security limiting access to each authenticated user's own rows; it does not modify tracked bets. No new environment variables are required.
+
 ## Features and limitations
 
 - The live odds API route remains at `/api/odds`.
+- The research page uses the existing `/api/odds` endpoint; it does not expose the provider key to the browser.
+- Bet intelligence is an educational calculator, not a prediction or recommendation.
+- The dashboard reads the existing `tracked_bets` table and the new private watchlist.
 - The research slip calculates illustrative potential returns; parlays are not saved.
 - Saved single picks are scoped to the signed-in user by Supabase Row Level Security.
 - Results are entered manually. Profit and ROI are estimates based on user-entered results, not official settlement.

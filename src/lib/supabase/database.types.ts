@@ -60,6 +60,39 @@ export type Database = {
         };
         Relationships: [];
       };
+      pe_watchlist: {
+        Row: {
+          id: string;
+          user_id: string;
+          event_id: string;
+          sport: string;
+          home_team: string;
+          away_team: string;
+          start_time: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          user_id: string;
+          event_id: string;
+          sport: string;
+          home_team: string;
+          away_team: string;
+          start_time?: string | null;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          user_id?: string;
+          event_id?: string;
+          sport?: string;
+          home_team?: string;
+          away_team?: string;
+          start_time?: string | null;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
     };
     Views: { [_ in never]: never };
     Functions: { [_ in never]: never };

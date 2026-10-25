@@ -1,4 +1,5 @@
 'use client';
+import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Event } from '../lib/odds';
@@ -135,12 +136,16 @@ export default function Home() {
       <button onClick={()=>setView('markets')} className={'nav-item '+(view==='markets'?'active':'')}>◈ <span>Markets</span></button>
       <button onClick={()=>setView('slip')} className={'nav-item '+(view==='slip'?'active':'')}>▤ <span>My slip {slip.length?`(${slip.length})`:''}</span></button>
       <button onClick={()=>setView('tracker')} className={'nav-item '+(view==='tracker'?'active':'')}>▥ <span>Bet tracker</span></button>
+      <p className="nav-label">MORE TOOLS</p>
+      <Link href="/research" className="nav-item">◉ <span>Research Lab</span></Link>
+      <Link href="/intelligence" className="nav-item">◌ <span>Bet Intelligence</span></Link>
+      <Link href="/dashboard" className="nav-item">▧ <span>My Dashboard</span></Link>
       <div className="aside-bottom"><div className="status-dot">● <span>Research platform</span></div><small>No real-money wagers or deposits.</small></div>
     </aside>
     <main className="main-area">
       <header className="topbar"><div className="mobile-brand">✦ PRIME<span>EDGE</span></div><span className="live-label"><i/> ODDS RESEARCH</span><div className="top-actions">{userId?<button className="btn outline" onClick={async()=>{await supabase?.auth.signOut();setAuthMessage('');}}>Sign out</button>:<button className="btn primary" onClick={()=>setAuthOpen(true)}>Sign in / Join ↗</button>}</div></header>
       <div className="content">
-        <section className="hero"><div><div className="eyebrow">YOUR SPORTS INTELLIGENCE PLATFORM <span>✧</span></div><h1>Find the edge.<br/><em>Know the numbers.</em></h1><p>Compare sportsbook odds, create a research slip, and track results in one polished workspace.</p><div className="hero-actions"><button className="btn primary" onClick={()=>setView('markets')}>Explore markets →</button><button className="btn ghost" onClick={()=>setView('tracker')}>View my performance ↗</button></div></div><div className="hero-art" aria-hidden="true"><div className="orbit orbit-one"/><div className="orbit orbit-two"/><div className="hero-icon">✦</div></div></section>
+        <section className="hero"><div><div className="eyebrow">YOUR SPORTS INTELLIGENCE PLATFORM <span>✧</span></div><h1>Find the edge.<br/><em>Know the numbers.</em></h1><p>Compare sportsbook odds, create a research slip, and track results in one polished workspace.</p><div className="hero-actions"><button className="btn primary" onClick={()=>setView('markets')}>Explore markets →</button><button className="btn ghost" onClick={()=>setView('tracker')}>View my performance ↗</button><Link className="btn ghost" href="/research">Research Lab →</Link><Link className="btn ghost" href="/intelligence">Bet Intelligence →</Link><Link className="btn ghost" href="/dashboard">My Dashboard →</Link></div></div><div className="hero-art" aria-hidden="true"><div className="orbit orbit-one"/><div className="orbit orbit-two"/><div className="hero-icon">✦</div></div></section>
         <div className="stat-grid"><div className="stat"><span>AVAILABLE MATCHUPS</span><strong>{loading?'—':events.length}</strong><small>{league.toUpperCase()} · Current feed</small></div><div className="stat"><span>TRACKED PICKS</span><strong>{tracked.length}</strong><small>{userId?'Your personal records':'Sign in to start tracking'}</small></div><div className="stat"><span>TRACKED PROFIT</span><strong className={stats.profit>=0?'positive':'negative'}>{currency(stats.profit)}</strong><small>Settled singles only</small></div><div className="stat"><span>TRACKED ROI</span><strong>{stats.roi.toFixed(1)}%</strong><small>{stats.wins} wins · {stats.settled} decisions</small></div></div>
         <div className="section-header"><div><div className="eyebrow small">PRIMEEDGE / {view.toUpperCase()}</div><h2>{view==='markets'?'Explore the markets':view==='slip'?'Research slip':'Performance tracker'}</h2><p>{view==='markets'?'Select a moneyline to add it to your research slip.':view==='slip'?'Estimate theoretical returns for your selections.':'Manage your saved picks and results.'}</p></div>{view==='markets'&&<button className="btn outline" onClick={()=>setRefresh(r=>r+1)}>↻ Refresh</button>}</div>
         {view==='markets'&&<div className="markets-layout"><section className="surface market-panel"><div className="panel-top"><div className="sport-tabs">{leagues.map(l=><button key={l} onClick={()=>setLeague(l)} className={league===l?'on':''}>{l.toUpperCase()}</button>)}</div><span className="info-chip">MONEYLINE · BEST AVAILABLE</span></div>
