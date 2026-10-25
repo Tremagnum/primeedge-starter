@@ -6,9 +6,7 @@ export function createClient() {
   const publishableKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
 
   if (!supabaseUrl || !publishableKey) {
-    throw new Error(
-      'Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY in .env.local',
-    );
+    return null;
   }
 
   return createBrowserClient<Database>(supabaseUrl, publishableKey);

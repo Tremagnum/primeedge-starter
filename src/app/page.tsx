@@ -1,14 +1,15 @@
 'use client';
-
 import { useEffect, useMemo, useState } from 'react';
-import type { FormEvent } from 'react';
-import type { User } from '@supabase/supabase-js';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Event } from '../lib/odds';
-import { americanLabel, bestMoneylines, decimalOdds, impliedProbability, potentialProfit } from '../lib/odds';
-import type { BetStatus, Database } from '../lib/supabase/database.types';
+import { americanLabel, bestMoneylines, decimalOdds, impliedProbability } from '../lib/odds';
 import { createClient } from '../lib/supabase/client';
+import type { Database } from '../lib/supabase/database.types';
 
-type TrackedBet = Database['public']['Tables']['tracked_bets']['Row'];
+type Pick = Database['public']['Tables']['tracked_bets']['Row'];
+type Slip = { eventId: string; sport: string; event: string; selection: string; price: number; sportsbook: string };
+const leagues = ['nba','nfl','mlb'] as const;
+const currency = (n:number) => new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(n);
 
 function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
@@ -18,368 +19,144 @@ function errorMessage(error: unknown): string {
   return 'An unexpected error occurred. Please try again.';
 }
 
-function isBetStatus(value: string): value is BetStatus {
-  return value === 'pending' || value === 'won' || value === 'lost' || value === 'push';
-}
-
 export default function Home() {
-  const supabase = useMemo(() => createClient(), []);
-  const [league, setLeague] = useState('nba');
-  const [events, setEvents] = useState<Event[]>([]);
-  const [oddsError, setOddsError] = useState('');
-  const [oddsLoading, setOddsLoading] = useState(true);
-  const [stake, setStake] = useState('20');
-  const [odds, setOdds] = useState('-110');
-  const [legs, setLegs] = useState('-110,+150');
-
-  const [user, setUser] = useState<User | null>(null);
-  const [authLoading, setAuthLoading] = useState(true);
-  const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [authBusy, setAuthBusy] = useState(false);
-  const [authError, setAuthError] = useState('');
-  const [authMessage, setAuthMessage] = useState('');
-
-  const [bets, setBets] = useState<TrackedBet[]>([]);
-  const [betsLoading, setBetsLoading] = useState(false);
-  const [betsError, setBetsError] = useState('');
-  const [betsRevision, setBetsRevision] = useState(0);
-  const [betBusy, setBetBusy] = useState(false);
-  const [busyBetId, setBusyBetId] = useState<string | null>(null);
-  const [pickSport, setPickSport] = useState('nba');
-  const [eventName, setEventName] = useState('');
-  const [selection, setSelection] = useState('');
-  const [sportsbook, setSportsbook] = useState('');
-  const [pickOdds, setPickOdds] = useState('');
-  const [pickStake, setPickStake] = useState('20');
-  const [pickMessage, setPickMessage] = useState('');
-
-  useEffect(() => {
+  const [supabase, setSupabase] = useState<SupabaseClient<Database> | null>(null);
+  const [view,setView] = useState<'markets'|'slip'|'tracker'>('markets');
+  const [league,setLeague] = useState('nba');
+  const [events,setEvents] = useState<Event[]>([]);
+  const [loading,setLoading] = useState(true);
+  const [error,setError] = useState('');
+  const [fetchedAt,setFetchedAt] = useState('');
+  const [slip,setSlip] = useState<Slip[]>([]);
+  const [stake,setStake] = useState('25');
+  const [email,setEmail] = useState('');
+  const [password,setPassword] = useState('');
+  const [userId,setUserId] = useState<string|null>(null);
+  const [authOpen,setAuthOpen] = useState(false);
+  const [authMessage,setAuthMessage] = useState('');
+  const [authLoading,setAuthLoading] = useState(false);
+  const [tracked,setTracked] = useState<Pick[]>([]);
+  const [saveMessage,setSaveMessage] = useState('');
+  const [refresh,setRefresh] = useState(0);
+  const wager = Number(stake);
+  const validStake = Number.isFinite(wager) && wager > 0 && wager <= 1000000;
+  const combined = slip.reduce((a,p)=>a*decimalOdds(p.price),1);
+  const payout = validStake ? wager*combined : 0;
+  useEffect(()=>{
+    setSupabase(createClient());
+  },[]);
+  const stats = useMemo(()=>{
+    const closed = tracked.filter(p=>p.status!=='pending');
+    const risk = closed.reduce((s,p)=>s+Number(p.stake),0);
+    const profit = closed.reduce((s,p)=>s+(p.status==='won'? Number(p.stake)*(decimalOdds(p.american_odds)-1):p.status==='lost'?-Number(p.stake):0),0);
+    return { profit, roi:risk>0?profit/risk*100:0, wins:closed.filter(p=>p.status==='won').length, settled:closed.filter(p=>p.status==='won'||p.status==='lost').length };
+  },[tracked]);
+  useEffect(()=>{
     let active = true;
-    setOddsLoading(true);
-    setOddsError('');
-    setEvents([]);
-    fetch(`/api/odds?league=${league}`)
-      .then(async (response) => {
-        const body = await response.json();
-        if (!response.ok) throw new Error(body.error || 'Request failed');
-        if (active) setEvents(body.events ?? []);
-      })
-      .catch((error: unknown) => {
-        if (active) setOddsError(errorMessage(error));
-      })
-      .finally(() => {
-        if (active) setOddsLoading(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, [league]);
-
-  useEffect(() => {
-    let active = true;
-    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (active) {
-        setUser(session?.user ?? null);
-        setAuthLoading(false);
-      }
+    setLoading(true);setError('');setEvents([]);
+    fetch(`/api/odds?league=${league}`).then(async r=>{
+      const data = await r.json();
+      if(!r.ok) throw new Error(data.error||'Unable to fetch odds');
+      if(active){setEvents(data.events??[]);setFetchedAt(data.fetched_at??'');}
+    }).catch(e=>{if(active)setError(e instanceof Error?e.message:'Unknown error');}).finally(()=>{if(active)setLoading(false);});
+    return ()=>{active=false;};
+  },[league,refresh]);
+  useEffect(()=>{
+    if(!supabase)return;
+    let active=true;
+    supabase.auth.getUser().then(({data,error})=>{
+      if(!active)return;
+      if(error)setAuthMessage(error.message);
+      setUserId(data.user?.id??null);
+    }).catch((error:unknown)=>{
+      if(active)setAuthMessage(errorMessage(error));
     });
-
-    supabase.auth.getSession()
-      .then(({ data, error }) => {
-        if (!active) return;
-        if (error) setAuthError(error.message);
-        setUser(data.session?.user ?? null);
-        setAuthLoading(false);
-      })
-      .catch((error: unknown) => {
-        if (!active) return;
-        setAuthError(errorMessage(error));
-        setAuthLoading(false);
-      });
-
-    return () => {
-      active = false;
-      authListener.subscription.unsubscribe();
-    };
-  }, [supabase]);
-
-  useEffect(() => {
-    let active = true;
-
-    if (!user || authLoading) {
-      setBets([]);
-      setBetsError('');
-      setBetsLoading(false);
-      return () => {
-        active = false;
-      };
-    }
-
-    setBetsLoading(true);
-    setBetsError('');
-    void (async () => {
-      try {
-        const { data, error } = await supabase
-          .from('tracked_bets')
-          .select('*')
-          .order('created_at', { ascending: false })
-          .limit(100);
-        if (!active) return;
-        if (error) {
-          setBetsError(error.message);
-          return;
-        }
-        setBets(data);
-      } catch (error: unknown) {
-        if (active) setBetsError(errorMessage(error));
-      } finally {
-        if (active) setBetsLoading(false);
+    const {data:{subscription}}=supabase.auth.onAuthStateChange((_event,session)=>setUserId(session?.user?.id??null));
+    return ()=>{active=false;subscription.unsubscribe();};
+  },[supabase]);
+  useEffect(()=>{
+    if(!supabase||!userId){setTracked([]);return;}
+    let current = true;
+    void (async()=>{
+      try{
+        const {data,error}=await supabase.from('tracked_bets').select('*').eq('user_id',userId).order('created_at',{ascending:false}).limit(100);
+        if(!current)return;
+        if(error)setSaveMessage(error.message);
+        else setTracked(data);
+      }catch(error:unknown){
+        if(current)setSaveMessage(errorMessage(error));
       }
     })();
-
-    return () => {
-      active = false;
-    };
-  }, [authLoading, betsRevision, supabase, user]);
-
-  const stakeNumber = Number(stake);
-  const oddsNumber = Number(odds);
-  const validStake = Number.isFinite(stakeNumber) && stakeNumber > 0;
-  const validOdds = Number.isFinite(oddsNumber) && Number.isInteger(oddsNumber) && (oddsNumber >= 100 || oddsNumber <= -100);
-  const legNumbers = legs.split(',').map((value) => Number(value.trim()));
-  const validLegs = legNumbers.length > 0 && legNumbers.every((value) => Number.isInteger(value) && (value >= 100 || value <= -100));
-  const payout = validStake && validOdds ? stakeNumber + potentialProfit(stakeNumber, oddsNumber) : null;
-  const parlayPayout = validStake && validLegs ? stakeNumber * legNumbers.reduce((total, value) => total * decimalOdds(value), 1) : null;
-  const pickOddsNumber = Number(pickOdds);
-  const pickStakeNumber = Number(pickStake);
-  const validPick = Number.isInteger(pickOddsNumber)
-    && (pickOddsNumber >= 100 || pickOddsNumber <= -100)
-    && Number.isFinite(pickStakeNumber)
-    && pickStakeNumber > 0
-    && eventName.trim().length > 0
-    && selection.trim().length > 0;
-
-  async function handleAuthSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setAuthBusy(true);
-    setAuthError('');
-    setAuthMessage('');
-
-    try {
-      if (authMode === 'signup') {
-        const { data, error } = await supabase.auth.signUp({ email, password });
-        if (error) throw error;
-        if (!data.session) {
-          setAuthMessage('Check your email to confirm your account, then sign in here.');
-        }
-      } else {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) throw error;
-      }
-      setPassword('');
-    } catch (error: unknown) {
-      setAuthError(errorMessage(error));
-    } finally {
-      setAuthBusy(false);
+    return ()=>{current=false};
+  },[userId,refresh]);
+  const toggle=(pick:Slip)=>setSlip(old=>old.some(p=>p.eventId===pick.eventId&&p.selection===pick.selection)?old.filter(p=>p.eventId!==pick.eventId):[...old.filter(p=>p.eventId!==pick.eventId),pick]);
+  const auth=async(kind:'signup'|'login')=>{
+    if(!supabase)return;
+    setAuthLoading(true);setAuthMessage('');
+    try{
+      const res = kind==='signup'? await supabase.auth.signUp({email,password}) : await supabase.auth.signInWithPassword({email,password});
+      if(res.error)setAuthMessage(res.error.message);
+      else if(kind==='signup')setAuthMessage('Check your email for a confirmation link, then sign in.');
+      else{setAuthMessage('Signed in successfully.');setAuthOpen(false);}
+    }catch(error:unknown){
+      setAuthMessage(errorMessage(error));
+    }finally{
+      setAuthLoading(false);
     }
-  }
-
-  async function handleSignOut() {
-    setAuthBusy(true);
-    setAuthError('');
-    try {
-      const { error } = await supabase.auth.signOut();
-      if (error) throw error;
-      setAuthMessage('');
-    } catch (error: unknown) {
-      setAuthError(errorMessage(error));
-    } finally {
-      setAuthBusy(false);
+  };
+  const savePick=async()=>{
+    if(!supabase||!userId){setAuthOpen(true);setSaveMessage('Sign in first to save your selection.');return;}
+    if(slip.length!==1){setSaveMessage('For now, tracking supports one selection at a time. Parlays are for calculation only.');return;}
+    if(!validStake){setSaveMessage('Enter a stake greater than zero.');return;}
+    const p=slip[0];
+    try{
+      const {error}=await supabase.from('tracked_bets').insert({user_id:userId,sport:p.sport,event_name:p.event,selection:p.selection,sportsbook:p.sportsbook,american_odds:p.price,stake:wager,status:'pending'});
+      if(error)setSaveMessage(error.message);
+      else{setSaveMessage('Selection saved to your tracker.');setRefresh(r=>r+1);setView('tracker');}
+    }catch(error:unknown){
+      setSaveMessage(errorMessage(error));
     }
-  }
-
-  function prepareTrackedPick(game: Event, team: string, price: number, book: string) {
-    setPickSport(league);
-    setEventName(`${game.away_team} at ${game.home_team}`);
-    setSelection(`${team} moneyline`);
-    setSportsbook(book);
-    setPickOdds(String(price));
-    setPickMessage('');
-    document.getElementById('track-pick-form')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }
-
-  async function handleTrackPick(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!user || !validPick) return;
-
-    setBetBusy(true);
-    setBetsError('');
-    setPickMessage('');
-    try {
-      const { error } = await supabase.from('tracked_bets').insert({
-        user_id: user.id,
-        sport: pickSport,
-        event_name: eventName.trim(),
-        selection: selection.trim(),
-        sportsbook: sportsbook.trim() || null,
-        american_odds: pickOddsNumber,
-        stake: pickStakeNumber,
-      });
-      if (error) throw error;
-      setPickMessage('Pick saved to your account.');
-      setEventName('');
-      setSelection('');
-      setSportsbook('');
-      setPickOdds('');
-      setPickStake('20');
-      setBetsRevision((revision) => revision + 1);
-    } catch (error: unknown) {
-      setBetsError(errorMessage(error));
-    } finally {
-      setBetBusy(false);
+  };
+  const updateStatus=async(id:string,status:Pick['status'])=>{
+    if(!supabase||!userId)return;
+    try{
+      const {error}=await supabase.from('tracked_bets').update({status}).eq('id',id).eq('user_id',userId);
+      if(error)setSaveMessage(error.message); else {setSaveMessage('Result updated.');setRefresh(r=>r+1);}
+    }catch(error:unknown){
+      setSaveMessage(errorMessage(error));
     }
-  }
-
-  async function updateBetStatus(betId: string, status: BetStatus) {
-    setBusyBetId(betId);
-    setBetsError('');
-    try {
-      const { error } = await supabase.from('tracked_bets').update({ status }).eq('id', betId);
-      if (error) throw error;
-      setBetsRevision((revision) => revision + 1);
-    } catch (error: unknown) {
-      setBetsError(errorMessage(error));
-    } finally {
-      setBusyBetId(null);
-    }
-  }
-
-  async function deleteBet(betId: string) {
-    if (!window.confirm('Delete this saved pick? This cannot be undone.')) return;
-    setBusyBetId(betId);
-    setBetsError('');
-    try {
-      const { error } = await supabase.from('tracked_bets').delete().eq('id', betId);
-      if (error) throw error;
-      setBetsRevision((revision) => revision + 1);
-    } catch (error: unknown) {
-      setBetsError(errorMessage(error));
-    } finally {
-      setBusyBetId(null);
-    }
-  }
-
-  return (
-    <main>
-      <header>
-        <div className="logo">◈ <strong>PrimeEdge</strong><span> SPORTS</span></div>
-        <span className="tag">RESEARCH ONLY · NO WAGERING</span>
-      </header>
-      <section className="hero">
-        <p className="eyebrow">SPORTS INTELLIGENCE PLATFORM</p>
-        <h1>Make sense of the <em>numbers.</em></h1>
-        <p>Compare sportsbook prices, calculate payouts, and research games. For informational use only.</p>
-      </section>
-
-      <div className="layout">
-        <section className="panel wide account-panel">
-          <div className="section-head">
-            <div>
-              <h2>Your account</h2>
-              <p>Sign in to save and manage your private picks.</p>
-            </div>
-            {user && <button className="secondary-button" type="button" onClick={handleSignOut} disabled={authBusy}>Sign out</button>}
-          </div>
-          {authLoading ? <p className="muted">Checking your session…</p> : user ? (
-            <p className="account-email">Signed in as <strong>{user.email}</strong></p>
-          ) : (
-            <form className="auth-form" onSubmit={handleAuthSubmit}>
-              <label>Email<input type="email" autoComplete="email" required value={email} onChange={(event) => setEmail(event.target.value)} /></label>
-              <label>Password<input type="password" autoComplete={authMode === 'signup' ? 'new-password' : 'current-password'} minLength={6} required value={password} onChange={(event) => setPassword(event.target.value)} /></label>
-              <button className="primary-button" type="submit" disabled={authBusy}>{authBusy ? 'Please wait…' : authMode === 'signup' ? 'Create account' : 'Sign in'}</button>
-              <button className="text-button" type="button" onClick={() => { setAuthMode(authMode === 'signin' ? 'signup' : 'signin'); setAuthError(''); setAuthMessage(''); }}>
-                {authMode === 'signup' ? 'Already have an account? Sign in' : 'New here? Create an account'}
-              </button>
-            </form>
-          )}
-          {authError && <p className="notice" role="alert">{authError}</p>}
-          {authMessage && <p className="success-notice" role="status">{authMessage}</p>}
-        </section>
-
-        <section className="panel wide">
-          <div className="section-head">
-            <div><h2>Odds comparison</h2><p>Best available moneyline among returned books</p></div>
-            <div className="tabs">{['nba', 'mlb', 'nfl'].map((sport) => <button key={sport} type="button" className={league === sport ? 'selected' : ''} onClick={() => { setLeague(sport); setPickSport(sport); }}>{sport.toUpperCase()}</button>)}</div>
-          </div>
-          {oddsLoading ? <p className="muted">Loading sportsbook data…</p> : oddsError ? <p className="notice" role="alert">{oddsError}</p> : events.length === 0 ? <p className="notice">No upcoming games returned for this league. Try another league or check later.</p> : events.slice(0, 20).map((game) => (
-            <article className="game" key={game.event_id}>
-              <div><small>{new Date(game.start_time).toLocaleString()}</small><h3>{game.away_team} <span>at</span> {game.home_team}</h3></div>
-              <div className="outcomes">{bestMoneylines(game).map((outcome) => (
-                <div className="odd" key={outcome.name}>
-                  <small>{outcome.name}</small><b>{americanLabel(outcome.price)}</b><small>{outcome.book}</small>
-                  {user && <button type="button" className="track-button" onClick={() => prepareTrackedPick(game, outcome.name, outcome.price, outcome.book)}>Track pick</button>}
-                </div>
-              ))}</div>
-            </article>
-          ))}
-          <p className="foot">Data is delayed or cached. Prices may change. An odds listing does not imply legal availability in your location.</p>
-        </section>
-
-        <section className="panel">
-          <h2>Payout calculator</h2><p>Enter a stake and American odds.</p>
-          <label>Stake ($)<input type="number" min="0" step="0.01" value={stake} onChange={(event) => setStake(event.target.value)} /></label>
-          <label>American odds<input type="number" step="1" value={odds} onChange={(event) => setOdds(event.target.value)} /></label>
-          {payout === null ? <p className="notice">Use a positive stake and odds of +100 or higher, or -100 or lower.</p> : <div className="result"><small>Potential total return</small><strong>${payout.toFixed(2)}</strong><span>Profit: ${(payout - stakeNumber).toFixed(2)} · Implied probability: {(impliedProbability(oddsNumber) * 100).toFixed(1)}%</span></div>}
-        </section>
-
-        <section className="panel">
-          <h2>Parlay calculator</h2><p>Enter multiple American odds separated by commas.</p>
-          <label>Leg odds<input type="text" value={legs} onChange={(event) => setLegs(event.target.value)} placeholder="-110,+150,-120" /></label>
-          {parlayPayout === null ? <p className="notice">Enter valid American odds for every leg.</p> : <div className="result"><small>Theoretical total return</small><strong>${parlayPayout.toFixed(2)}</strong><span>{legNumbers.length} legs · Stake: ${stakeNumber.toFixed(2)}</span></div>}
-          <p className="foot">Assumes independent outcomes and ignores correlation restrictions. Not a prediction.</p>
-        </section>
-
-        {user && <>
-          <section className="panel" id="track-pick-form">
-            <h2>Track a pick</h2><p>Save a single selection to your account. This does not place a wager.</p>
-            <form onSubmit={handleTrackPick}>
-              <label>Sport<select value={pickSport} onChange={(event) => setPickSport(event.target.value)}><option value="nba">NBA</option><option value="mlb">MLB</option><option value="nfl">NFL</option></select></label>
-              <label>Game or event<input required maxLength={200} value={eventName} onChange={(event) => setEventName(event.target.value)} placeholder="Team A at Team B" /></label>
-              <label>Selection<input required maxLength={200} value={selection} onChange={(event) => setSelection(event.target.value)} placeholder="Team A moneyline" /></label>
-              <label>Sportsbook (optional)<input maxLength={100} value={sportsbook} onChange={(event) => setSportsbook(event.target.value)} placeholder="Book name" /></label>
-              <label>American odds<input required type="number" step="1" value={pickOdds} onChange={(event) => setPickOdds(event.target.value)} placeholder="-110 or +150" /></label>
-              <label>Stake ($)<input required type="number" min="0.01" step="0.01" value={pickStake} onChange={(event) => setPickStake(event.target.value)} /></label>
-              <button className="primary-button" type="submit" disabled={betBusy || !validPick}>{betBusy ? 'Saving…' : 'Save pick'}</button>
-            </form>
-            {pickMessage && <p className="success-notice" role="status">{pickMessage}</p>}
-            {betsError && <p className="notice" role="alert">{betsError}</p>}
-          </section>
-
-          <section className="panel wide">
-            <h2>Your saved picks</h2>
-            <p>Only you can view and manage picks saved to your account.</p>
-            {betsLoading ? <p className="muted">Loading your picks…</p> : betsError ? <p className="notice" role="alert">{betsError}</p> : bets.length === 0 ? <p className="notice">No saved picks yet. Track an odds comparison or add a pick above.</p> : (
-              <div className="bets-list">{bets.map((bet) => (
-                <article className="bet-row" key={bet.id}>
-                  <div className="bet-details">
-                    <span className="bet-sport">{bet.sport.toUpperCase()} · {bet.status.toUpperCase()}</span>
-                    <h3>{bet.selection}</h3>
-                    <p>{bet.event_name}{bet.sportsbook ? ` · ${bet.sportsbook}` : ''}</p>
-                    <small>{americanLabel(bet.american_odds)} odds · ${Number(bet.stake).toFixed(2)} stake · {new Date(bet.created_at).toLocaleDateString()}</small>
-                  </div>
-                  <div className="bet-actions">
-                    <label>Status<select aria-label={`Status for ${bet.selection}`} value={bet.status} disabled={busyBetId === bet.id} onChange={(event) => { if (isBetStatus(event.target.value)) void updateBetStatus(bet.id, event.target.value); }}><option value="pending">Pending</option><option value="won">Won</option><option value="lost">Lost</option><option value="push">Push</option></select></label>
-                    <button className="delete-button" type="button" disabled={busyBetId === bet.id} onClick={() => deleteBet(bet.id)}>Delete</button>
-                  </div>
-                </article>
-              ))}</div>
-            )}
-          </section>
-        </>}
+  };
+  return <div className="app-shell">
+    <aside className="sidebar"><div className="brand"><span className="brand-symbol">✦</span><div><strong>PRIME<span>EDGE</span></strong><small>SPORTS INTELLIGENCE</small></div></div>
+      <p className="nav-label">WORKSPACE</p>
+      <button onClick={()=>setView('markets')} className={'nav-item '+(view==='markets'?'active':'')}>◈ <span>Markets</span></button>
+      <button onClick={()=>setView('slip')} className={'nav-item '+(view==='slip'?'active':'')}>▤ <span>My slip {slip.length?`(${slip.length})`:''}</span></button>
+      <button onClick={()=>setView('tracker')} className={'nav-item '+(view==='tracker'?'active':'')}>▥ <span>Bet tracker</span></button>
+      <div className="aside-bottom"><div className="status-dot">● <span>Research platform</span></div><small>No real-money wagers or deposits.</small></div>
+    </aside>
+    <main className="main-area">
+      <header className="topbar"><div className="mobile-brand">✦ PRIME<span>EDGE</span></div><span className="live-label"><i/> ODDS RESEARCH</span><div className="top-actions">{userId?<button className="btn outline" onClick={async()=>{await supabase?.auth.signOut();setAuthMessage('');}}>Sign out</button>:<button className="btn primary" onClick={()=>setAuthOpen(true)}>Sign in / Join ↗</button>}</div></header>
+      <div className="content">
+        <section className="hero"><div><div className="eyebrow">YOUR SPORTS INTELLIGENCE PLATFORM <span>✧</span></div><h1>Find the edge.<br/><em>Know the numbers.</em></h1><p>Compare sportsbook odds, create a research slip, and track results in one polished workspace.</p><div className="hero-actions"><button className="btn primary" onClick={()=>setView('markets')}>Explore markets →</button><button className="btn ghost" onClick={()=>setView('tracker')}>View my performance ↗</button></div></div><div className="hero-art" aria-hidden="true"><div className="orbit orbit-one"/><div className="orbit orbit-two"/><div className="hero-icon">✦</div></div></section>
+        <div className="stat-grid"><div className="stat"><span>AVAILABLE MATCHUPS</span><strong>{loading?'—':events.length}</strong><small>{league.toUpperCase()} · Current feed</small></div><div className="stat"><span>TRACKED PICKS</span><strong>{tracked.length}</strong><small>{userId?'Your personal records':'Sign in to start tracking'}</small></div><div className="stat"><span>TRACKED PROFIT</span><strong className={stats.profit>=0?'positive':'negative'}>{currency(stats.profit)}</strong><small>Settled singles only</small></div><div className="stat"><span>TRACKED ROI</span><strong>{stats.roi.toFixed(1)}%</strong><small>{stats.wins} wins · {stats.settled} decisions</small></div></div>
+        <div className="section-header"><div><div className="eyebrow small">PRIMEEDGE / {view.toUpperCase()}</div><h2>{view==='markets'?'Explore the markets':view==='slip'?'Research slip':'Performance tracker'}</h2><p>{view==='markets'?'Select a moneyline to add it to your research slip.':view==='slip'?'Estimate theoretical returns for your selections.':'Manage your saved picks and results.'}</p></div>{view==='markets'&&<button className="btn outline" onClick={()=>setRefresh(r=>r+1)}>↻ Refresh</button>}</div>
+        {view==='markets'&&<div className="markets-layout"><section className="surface market-panel"><div className="panel-top"><div className="sport-tabs">{leagues.map(l=><button key={l} onClick={()=>setLeague(l)} className={league===l?'on':''}>{l.toUpperCase()}</button>)}</div><span className="info-chip">MONEYLINE · BEST AVAILABLE</span></div>
+          {loading?<div className="empty">Loading sportsbook markets…</div>:error?<div className="empty"><strong>Live odds unavailable</strong><p>{error}</p><small>Confirm your existing ODDS_API_KEY in .env.local and that your plan covers this league.</small></div>:events.length===0?<div className="empty">No upcoming games for this league right now.</div>:events.slice(0,25).map(e=>{
+            const options=bestMoneylines(e).filter(o=>o.name===e.home_team||o.name===e.away_team);
+            return <div className="match" key={e.event_id}><div className="match-top"><span className="league-pill">{league.toUpperCase()}</span><span>{new Date(e.start_time).toLocaleString(undefined,{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</span></div><div className="match-body"><div className="teams"><div className="team"><span className="team-badge">{e.away_team.split(' ').map(s=>s[0]).slice(-2).join('')}</span>{e.away_team}</div><div className="team"><span className="team-badge">{e.home_team.split(' ').map(s=>s[0]).slice(-2).join('')}</span>{e.home_team}</div></div><div className="prices">{[e.away_team,e.home_team].map(name=>{
+              const o=options.find(x=>x.name===name);const selected=slip.some(p=>p.eventId===e.event_id&&p.selection===name);
+              return <button disabled={!o} key={name} className={'price-button '+(selected?'picked':'')} onClick={()=>o&&toggle({eventId:e.event_id,sport:league.toUpperCase(),event:`${e.away_team} @ ${e.home_team}`,selection:name,price:o.price,sportsbook:o.book})}><strong>{o?americanLabel(o.price):'—'}</strong><small>{o?o.book:'No price'}</small></button>;
+            })}</div></div></div>;
+          })}
+          <p className="disclaimer">Odds may be delayed, cached, or unavailable. Verify price and legal availability with the provider. Displaying an odds quote does not constitute a wager.</p>
+        </section><aside className="surface side-card"><div className="card-head"><h3>Research slip</h3><span className="count">{slip.length}</span></div><p>Build your selection list while browsing markets.</p>{slip.length===0?<div className="slip-empty">✧<p>Your slip is empty</p><small>Tap a price to add it here.</small></div>:<><div className="mini-picks">{slip.map(p=><div key={p.eventId}><span>{p.selection}</span><strong>{americanLabel(p.price)}</strong></div>)}</div><button className="btn primary full" onClick={()=>setView('slip')}>View slip →</button></>}</aside></div>}
+        {view==='slip'&&<section className="surface slip-view"><div className="card-head"><h3>My selections</h3><button className="text-button" onClick={()=>setSlip([])}>Clear all</button></div>{slip.length===0?<div className="empty">No selections yet. <button className="text-button" onClick={()=>setView('markets')}>Browse markets →</button></div>:<div className="slip-rows">{slip.map(p=><div className="slip-row" key={p.eventId}><div><strong>{p.selection}</strong><small>{p.event} · {p.sportsbook}</small></div><div><b>{americanLabel(p.price)}</b><button className="remove" aria-label={'Remove '+p.selection} onClick={()=>setSlip(s=>s.filter(x=>x.eventId!==p.eventId))}>✕</button></div></div>)}</div>}
+          <div className="calculator"><div><label htmlFor="stake">Simulated stake (USD)</label><input id="stake" value={stake} type="number" min="0" step="0.01" onChange={e=>setStake(e.target.value)}/>{!validStake&&<small className="error-text">Enter a valid positive stake.</small>}</div><div className="return-box"><small>Theoretical total return</small><strong>{slip.length&&validStake?currency(payout):'—'}</strong><span>Potential profit: {slip.length&&validStake?currency(payout-wager):'—'}</span></div></div><div className="slip-actions"><button className="btn outline" onClick={()=>setView('markets')}>← Add selections</button><button className="btn primary" disabled={slip.length===0||!validStake} onClick={savePick}>Save single to tracker</button></div>{saveMessage&&<p className="feedback">{saveMessage}</p>}<p className="disclaimer">Parlay math assumes independent legs, ignores correlation rules, and is not a prediction. Tracking currently saves only single selections.</p></section>}
+        {view==='tracker'&&<section className="surface tracker-view"><div className="card-head"><h3>Saved selections</h3><span className="info-chip">YOUR ACCOUNT</span></div>{!supabase?<div className="empty">Connect Supabase to enable accounts and saved picks. Follow the included setup guide.</div>:!userId?<div className="empty">Sign in to save selections and review your record.<br/><button className="btn primary" onClick={()=>setAuthOpen(true)}>Sign in / Create account</button></div>:tracked.length===0?<div className="empty">No saved picks yet. Add a selection from the markets.</div>:<div className="table-wrap"><table><thead><tr><th>Selection</th><th>Odds</th><th>Stake</th><th>Result</th></tr></thead><tbody>{tracked.map(p=><tr key={p.id}><td><strong>{p.selection}</strong><small>{p.event_name}</small></td><td>{americanLabel(p.american_odds)}</td><td>{currency(Number(p.stake))}</td><td><select aria-label={'Result for '+p.selection} value={p.status} onChange={e=>updateStatus(p.id,e.target.value as Pick['status'])}><option value="pending">Pending</option><option value="won">Won</option><option value="lost">Lost</option><option value="push">Push</option></select></td></tr>)}</tbody></table></div>}{saveMessage&&<p className="feedback">{saveMessage}</p>}<p className="disclaimer">Results are manually entered. ROI measures settled stakes, and pending picks are excluded.</p></section>}
+        <footer>© PrimeEdge Sports · Analytics and research only · No wagers accepted · Sample projections do not guarantee outcomes.</footer>
       </div>
-      <footer>PrimeEdge Sports · Research only · No bets placed or accepted · 21+ recommended</footer>
     </main>
-  );
+    {authOpen&&<div className="modal-overlay" onMouseDown={e=>{if(e.target===e.currentTarget)setAuthOpen(false);}}><div className="modal" role="dialog" aria-modal="true" aria-label="PrimeEdge account"><div className="card-head"><h2>Join PrimeEdge</h2><button className="remove" onClick={()=>setAuthOpen(false)} aria-label="Close">✕</button></div><p>Sign in or create an account to save your picks privately.</p>{!supabase?<div className="notice">Supabase has not been configured. Add your public URL and publishable key to .env.local, then restart the app.</div>:<><label>Email<input type="email" autoComplete="email" value={email} onChange={e=>setEmail(e.target.value)}/></label><label>Password<input type="password" autoComplete="current-password" minLength={6} value={password} onChange={e=>setPassword(e.target.value)}/></label><div className="modal-buttons"><button className="btn primary" disabled={authLoading||!email||password.length<6} onClick={()=>auth('login')}>Sign in</button><button className="btn outline" disabled={authLoading||!email||password.length<6} onClick={()=>auth('signup')}>Create account</button></div></>}{authMessage&&<p className="feedback">{authMessage}</p>}</div></div>}
+    <nav className="mobile-nav"><button onClick={()=>setView('markets')} className={view==='markets'?'on':''}>◈<span>Markets</span></button><button onClick={()=>setView('slip')} className={view==='slip'?'on':''}>▤<span>Slip ({slip.length})</span></button><button onClick={()=>setView('tracker')} className={view==='tracker'?'on':''}>▥<span>Tracker</span></button></nav>
+  </div>;
 }
