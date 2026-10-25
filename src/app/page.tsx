@@ -63,16 +63,8 @@ export default function Home() {
   },[league,refresh]);
   useEffect(()=>{
     if(!supabase)return;
-    let active=true;
-    supabase.auth.getUser().then(({data,error})=>{
-      if(!active)return;
-      if(error)setAuthMessage(error.message);
-      setUserId(data.user?.id??null);
-    }).catch((error:unknown)=>{
-      if(active)setAuthMessage(errorMessage(error));
-    });
     const {data:{subscription}}=supabase.auth.onAuthStateChange((_event,session)=>setUserId(session?.user?.id??null));
-    return ()=>{active=false;subscription.unsubscribe();};
+    return ()=>subscription.unsubscribe();
   },[supabase]);
   useEffect(()=>{
     if(!supabase||!userId){setTracked([]);return;}
