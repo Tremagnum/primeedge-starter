@@ -43,6 +43,11 @@ export default function Home() {
   const combined = slip.reduce((a,p)=>a*decimalOdds(p.price),1);
   const payout = validStake ? wager*combined : 0;
   useEffect(()=>{
+    const authHash = new URLSearchParams(window.location.hash.slice(1));
+    if (authHash.get('type') === 'invite' || authHash.get('type') === 'recovery') {
+      window.location.replace(`/auth/set-password${window.location.hash}`);
+      return;
+    }
     setSupabase(createClient());
   },[]);
   const stats = useMemo(()=>{
@@ -86,7 +91,13 @@ export default function Home() {
     if(!supabase)return;
     setAuthLoading(true);setAuthMessage('');
     try{
-      const res = kind==='signup'? await supabase.auth.signUp({email,password}) : await supabase.auth.signInWithPassword({email,password});
+      const res = kind==='signup'
+        ? await supabase.auth.signUp({
+            email,
+            password,
+            options: { emailRedirectTo: `${window.location.origin}/auth/callback?next=/` },
+          })
+        : await supabase.auth.signInWithPassword({email,password});
       if(res.error)setAuthMessage(res.error.message);
       else if(kind==='signup')setAuthMessage('Check your email for a confirmation link, then sign in.');
       else{setAuthMessage('Signed in successfully.');setAuthOpen(false);}
@@ -148,7 +159,7 @@ export default function Home() {
         <footer>© PrimeEdge Sports · Analytics and research only · No wagers accepted · Sample projections do not guarantee outcomes.</footer>
       </div>
     </main>
-    {authOpen&&<div className="modal-overlay" onMouseDown={e=>{if(e.target===e.currentTarget)setAuthOpen(false);}}><div className="modal" role="dialog" aria-modal="true" aria-label="PrimeEdge account"><div className="card-head"><h2>Join PrimeEdge</h2><button className="remove" onClick={()=>setAuthOpen(false)} aria-label="Close">✕</button></div><p>Sign in or create an account to save your picks privately.</p>{!supabase?<div className="notice">Supabase has not been configured. Add your public URL and publishable key to .env.local, then restart the app.</div>:<><label>Email<input type="email" autoComplete="email" value={email} onChange={e=>setEmail(e.target.value)}/></label><label>Password<input type="password" autoComplete="current-password" minLength={6} value={password} onChange={e=>setPassword(e.target.value)}/></label><div className="modal-buttons"><button className="btn primary" disabled={authLoading||!email||password.length<6} onClick={()=>auth('login')}>Sign in</button><button className="btn outline" disabled={authLoading||!email||password.length<6} onClick={()=>auth('signup')}>Create account</button></div></>}{authMessage&&<p className="feedback">{authMessage}</p>}</div></div>}
+    {authOpen&&<div className="modal-overlay" onMouseDown={e=>{if(e.target===e.currentTarget)setAuthOpen(false);}}><div className="modal" role="dialog" aria-modal="true" aria-label="PrimeEdge account"><div className="card-head"><h2>Join PrimeEdge</h2><button className="remove" onClick={()=>setAuthOpen(false)} aria-label="Close">✕</button></div><p>Sign in or create an account to save your picks privately.</p>{!supabase?<div className="notice">Supabase has not been configured. Add your public URL and publishable key to .env.local, then restart the app.</div>:<><label>Email<input type="email" autoComplete="email" value={email} onChange={e=>setEmail(e.target.value)}/></label><label>Password<input type="password" autoComplete="current-password" minLength={6} value={password} onChange={e=>setPassword(e.target.value)}/></label><div className="modal-buttons"><button className="btn primary" disabled={authLoading||!email||password.length<6} onClick={()=>auth('login')}>Sign in</button><button className="btn outline" disabled={authLoading||!email||password.length<6} onClick={()=>auth('signup')}>Create account</button></div><a className="auth-help-link" href="/auth/forgot-password">Forgot your password?</a></>}{authMessage&&<p className="feedback">{authMessage}</p>}</div></div>}
     <nav className="mobile-nav"><button onClick={()=>setView('markets')} className={view==='markets'?'on':''}>◈<span>Markets</span></button><button onClick={()=>setView('slip')} className={view==='slip'?'on':''}>▤<span>Slip ({slip.length})</span></button><button onClick={()=>setView('tracker')} className={view==='tracker'?'on':''}>▥<span>Tracker</span></button></nav>
   </div>;
 }

@@ -22,7 +22,9 @@ Never replace `.env.local` with `.env.example` or commit local credentials. The 
 
 This project uses the `@supabase/ssr` browser client and the existing row-level-security-protected `public.tracked_bets` table. The SQL reference is [`supabase-schema.sql`](./supabase-schema.sql). The current PrimeEdge Supabase project already has this table and its owner-only policies, so do not run the script again as part of this UI upgrade. For a new database, review the script and execute it once in the Supabase SQL Editor.
 
-Enable email signups in Supabase Authentication. If email confirmation is enabled, configure the local and production Site URL/redirect URLs in Supabase Auth settings.
+Enable email signups in Supabase Authentication. Keep the Site URL set to the production homepage and allow the production and local `/auth/callback` URLs in Auth URL Configuration. New signup and password-reset emails return through the callback, which exchanges Supabase auth codes and then redirects users safely.
+
+The app includes `/auth/set-password` for invitation and recovery sessions and `/auth/forgot-password` for requesting a reset email. Signup and reset requests explicitly return through `/auth/callback`. Supabase dashboard invitations use the configured Site URL; the app detects the invitation session returned in the URL fragment and forwards the user to the password setup page. This works with Supabase's default email templates and does not require custom SMTP. Keep the production homepage as the Site URL, and allow the production and local callback URLs in Auth URL Configuration. Never put a service-role key in the browser or change the production Site URL to a one-time password page.
 
 ## Deploy to Vercel
 
