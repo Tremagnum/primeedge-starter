@@ -32,10 +32,12 @@ export default function Home() {
   const [stake,setStake] = useState('25');
   const [email,setEmail] = useState('');
   const [password,setPassword] = useState('');
+  const [confirmationEmail,setConfirmationEmail] = useState('');
   const [userId,setUserId] = useState<string|null>(null);
   const [authOpen,setAuthOpen] = useState(false);
   const [authMessage,setAuthMessage] = useState('');
   const [authLoading,setAuthLoading] = useState(false);
+  const [resendLoading,setResendLoading] = useState(false);
   const [tracked,setTracked] = useState<Pick[]>([]);
   const [saveMessage,setSaveMessage] = useState('');
   const [refresh,setRefresh] = useState(0);
@@ -90,6 +92,7 @@ export default function Home() {
   const toggle=(pick:Slip)=>setSlip(old=>old.some(p=>p.eventId===pick.eventId&&p.selection===pick.selection)?old.filter(p=>p.eventId!==pick.eventId):[...old.filter(p=>p.eventId!==pick.eventId),pick]);
   const auth=async(kind:'signup'|'login')=>{
     if(!supabase)return;
+    if(kind==='signup')setConfirmationEmail('');
     setAuthLoading(true);setAuthMessage('');
     try{
       const res = kind==='signup'
@@ -100,12 +103,32 @@ export default function Home() {
           })
         : await supabase.auth.signInWithPassword({email,password});
       if(res.error)setAuthMessage(res.error.message);
-      else if(kind==='signup')setAuthMessage('Check your email for a confirmation link, then sign in.');
+      else if(kind==='signup'){
+        setConfirmationEmail(email.trim());
+        setAuthMessage('Signup submitted. Check your inbox and spam folder for the confirmation email.');
+      }
       else{setAuthMessage('Signed in successfully.');setAuthOpen(false);}
     }catch(error:unknown){
       setAuthMessage(errorMessage(error));
     }finally{
       setAuthLoading(false);
+    }
+  };
+  const resendConfirmation=async()=>{
+    if(!supabase||!confirmationEmail)return;
+    setResendLoading(true);setAuthMessage('');
+    try{
+      const {error}=await supabase.auth.resend({
+        type:'signup',
+        email:confirmationEmail,
+        options:{emailRedirectTo:`${window.location.origin}/auth/callback?next=/`},
+      });
+      if(error)setAuthMessage(error.message);
+      else setAuthMessage('If this account is still awaiting confirmation, a new email has been requested. Check your inbox and spam folder.');
+    }catch(error:unknown){
+      setAuthMessage(errorMessage(error));
+    }finally{
+      setResendLoading(false);
     }
   };
   const savePick=async()=>{
@@ -164,7 +187,7 @@ export default function Home() {
         <footer>© PrimeEdge Sports · Analytics and research only · No wagers accepted · Sample projections do not guarantee outcomes.</footer>
       </div>
     </main>
-    {authOpen&&<div className="modal-overlay" onMouseDown={e=>{if(e.target===e.currentTarget)setAuthOpen(false);}}><div className="modal" role="dialog" aria-modal="true" aria-label="PrimeEdge account"><div className="card-head"><h2>Join PrimeEdge</h2><button className="remove" onClick={()=>setAuthOpen(false)} aria-label="Close">✕</button></div><p>Sign in or create an account to save your picks privately.</p>{!supabase?<div className="notice">Supabase has not been configured. Add your public URL and publishable key to .env.local, then restart the app.</div>:<><label>Email<input type="email" autoComplete="email" value={email} onChange={e=>setEmail(e.target.value)}/></label><label>Password<input type="password" autoComplete="current-password" minLength={6} value={password} onChange={e=>setPassword(e.target.value)}/></label><div className="modal-buttons"><button className="btn primary" disabled={authLoading||!email||password.length<6} onClick={()=>auth('login')}>Sign in</button><button className="btn outline" disabled={authLoading||!email||password.length<6} onClick={()=>auth('signup')}>Create account</button></div><a className="auth-help-link" href="/auth/forgot-password">Forgot your password?</a></>}{authMessage&&<p className="feedback">{authMessage}</p>}</div></div>}
+    {authOpen&&<div className="modal-overlay" onMouseDown={e=>{if(e.target===e.currentTarget)setAuthOpen(false);}}><div className="modal" role="dialog" aria-modal="true" aria-label="PrimeEdge account"><div className="card-head"><h2>Join PrimeEdge</h2><button className="remove" onClick={()=>setAuthOpen(false)} aria-label="Close">✕</button></div><p>Sign in or create an account to save your picks privately.</p>{!supabase?<div className="notice">Supabase has not been configured. Add your public URL and publishable key to .env.local, then restart the app.</div>:<><label>Email<input type="email" autoComplete="email" value={email} onChange={e=>{setEmail(e.target.value);setConfirmationEmail('');}}/></label><label>Password<input type="password" autoComplete="current-password" minLength={6} value={password} onChange={e=>setPassword(e.target.value)}/></label><div className="modal-buttons"><button className="btn primary" disabled={authLoading||resendLoading||!email||password.length<6} onClick={()=>auth('login')}>Sign in</button><button className="btn outline" disabled={authLoading||resendLoading||!email||password.length<6} onClick={()=>auth('signup')}>Create account</button></div>{confirmationEmail&&<button className="btn outline full" disabled={authLoading||resendLoading} onClick={resendConfirmation}>{resendLoading?'Sending…':'Resend confirmation email'}</button>}<a className="auth-help-link" href="/auth/forgot-password">Forgot your password?</a></>}{authMessage&&<p className="feedback" role="status">{authMessage}</p>}</div></div>}
     <nav className="mobile-nav"><button onClick={()=>setView('markets')} className={view==='markets'?'on':''}>◈<span>Markets</span></button><button onClick={()=>setView('slip')} className={view==='slip'?'on':''}>▤<span>Slip ({slip.length})</span></button><button onClick={()=>setView('tracker')} className={view==='tracker'?'on':''}>▥<span>Tracker</span></button></nav>
   </div>;
 }

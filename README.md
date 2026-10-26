@@ -26,6 +26,8 @@ Enable email signups in Supabase Authentication. Keep the Site URL set to the pr
 
 The app includes `/auth/set-password` for invitation and recovery sessions and `/auth/forgot-password` for requesting a reset email. Signup and reset requests explicitly return through `/auth/callback`. Supabase dashboard invitations use the configured Site URL; the app detects the invitation session returned in the URL fragment and forwards the user to the password setup page. This works with Supabase's default email templates and does not require custom SMTP. Keep the production homepage as the Site URL, and allow the production and local callback URLs in Auth URL Configuration. Never put a service-role key in the browser or change the production Site URL to a one-time password page.
 
+The sign-in dialog lets a user request another signup confirmation email after a signup attempt. For public signup delivery, configure custom SMTP under Supabase Authentication → Emails; Supabase's built-in sender is restricted to project team addresses and is rate-limited. If an email still does not arrive, check the Auth logs, provider delivery logs, spam folder, and that the callback URL is allowed in Auth URL Configuration.
+
 ## Deploy to Vercel
 
 Set `ODDS_API_KEY`, `NEXT_PUBLIC_SUPABASE_URL`, and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` in the Vercel project environment settings, then redeploy. Use the Supabase publishable key, never a secret/service-role key or database password in a `NEXT_PUBLIC_` variable.
