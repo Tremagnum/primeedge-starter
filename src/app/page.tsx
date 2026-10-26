@@ -91,25 +91,46 @@ export default function Home() {
   },[userId,refresh]);
   const toggle=(pick:Slip)=>setSlip(old=>old.some(p=>p.eventId===pick.eventId&&p.selection===pick.selection)?old.filter(p=>p.eventId!==pick.eventId):[...old.filter(p=>p.eventId!==pick.eventId),pick]);
   const auth=async(kind:'signup'|'login')=>{
-    if(!supabase)return;
+    if(!supabase){
+      setAuthMessage('Supabase is not configured. Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY (or NEXT_PUBLIC_SUPABASE_ANON_KEY), then restart Next.js.');
+      return;
+    }
     if(kind==='signup')setConfirmationEmail('');
     setAuthLoading(true);setAuthMessage('');
+    const normalizedEmail=email.trim();
     try{
       const res = kind==='signup'
         ? await supabase.auth.signUp({
-            email,
+            email:normalizedEmail,
             password,
             options: { emailRedirectTo: `${window.location.origin}/auth/callback?next=/` },
           })
-        : await supabase.auth.signInWithPassword({email,password});
-      if(res.error)setAuthMessage(res.error.message);
+        : await supabase.auth.signInWithPassword({email:normalizedEmail,password});
+      if(res.error){
+        console.error('Supabase authentication request failed:',{
+          code:res.error.code,
+          status:res.error.status,
+          message:res.error.message,
+        });
+        setAuthMessage(`${res.error.message}${res.error.code?` (${res.error.code})`:''}`);
+      }
       else if(kind==='signup'){
-        setConfirmationEmail(email.trim());
-        setAuthMessage('Signup submitted. Check your inbox and spam folder for the confirmation email.');
+        if(res.data.session){
+          setConfirmationEmail('');
+          setAuthMessage('Your account was created and you are signed in.');
+        }else if(res.data.user){
+          setConfirmationEmail(normalizedEmail);
+          setAuthMessage('Supabase accepted the signup and created a pending account. Check your inbox and spam folder for a confirmation email. If none arrives, use Resend confirmation email.');
+        }else{
+          setConfirmationEmail('');
+          setAuthMessage('Supabase did not return a new account. If this email is already registered, sign in or use Forgot your password. Otherwise check the Supabase Auth logs and email delivery settings.');
+        }
       }
       else{setAuthMessage('Signed in successfully.');setAuthOpen(false);}
     }catch(error:unknown){
-      setAuthMessage(errorMessage(error));
+      const message=errorMessage(error);
+      console.error('Unexpected Supabase authentication failure:',message);
+      setAuthMessage(`${message} Check your connection and Supabase project configuration.`);
     }finally{
       setAuthLoading(false);
     }
